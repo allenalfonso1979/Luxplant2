@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>LuxPlant — Medidor de Luz para Plantas</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     VARIABLES & RESET
+  ============================================================ */
+  :root {
+    --bg:        #0d1a0f;
+    --surface:   #142318;
+    --border:    #1e3322;
+    --text:      #e8f0e9;
+    --muted:     #6b8f71;
+    --accent:    #4caf6e;
+
+    --red:       #e05252;
+    --yellow:    #e0b852;
+    --green:     #52c97a;
+
+    --radius:    18px;
+    --font-head: 'DM Serif Display', Georgia, serif;
+    --font-body: 'Instrument Sans', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+    padding-bottom: env(safe-area-inset-bottom, 24px);
+  }
+
+  /* ============================================================
+     HEADER
+  ============================================================ */
+  header {
+    width: 100%;
+    padding: 20px 24px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 50;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+
+  .logo h1 {
+    font-family: var(--font-head);
+    font-size: 1.4rem;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  .logo span {
+    color: var(--accent);
+    font-style: italic;
+  }
+
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 3px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  /* ============================================================
+     MAIN LAYOUT
+  ============================================================ */
+  main {
+    width: 100%;
+    max-width: 480px;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+  }
+
+  /* ============================================================
+     CAMERA VIEWPORT
+  ============================================================ */
+  .camera-section {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4/3;
+    background: var(--surface);
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  #video {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+    transform: scaleX(-1); /* mirror for selfie */
+  }
+
+  #canvas { display: none; }
+
+  .camera-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px;
+    background: rgba(13,26,15,0.85);
+    transition: opacity 0.4s;
+  }
+
+  .camera-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .camera-overlay p {
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-align: center;
+    max-width: 220px;
+    line-height: 1.5;
+  }
+
+  /* Corner brackets decoration */
+  .corner { position: absolute; width: 24px; height: 24px; border-color: var(--accent); border-style: solid; opacity: 0.6; }
+  .corner.tl { top: 14px; left: 14px; border-width: 2px 0 0 2px; border-radius: 4px 0 0 0; }
+  .corner.tr { top: 14px; right: 14px; border-width: 2px 2px 0 0; border-radius: 0 4px 0 0; }
+  .corner.bl { bottom: 14px; left: 14px; border-width: 0 0 2px 2px; border-radius: 0 0 0 4px; }
+  .corner.br { bottom: 14px; right: 14px; border-width: 0 2px 2px 0; border-radius: 0 0 4px 0; }
+
+  /* Scan line animation */
+  .scan-line {
+    position: absolute;
+    left: 14px; right: 14px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0;
+    animation: scan 2.5s ease-in-out infinite;
+  }
+
+  @keyframes scan {
+    0%   { top: 14px;  opacity: 0; }
+    10%  { opacity: 0.7; }
+    90%  { opacity: 0.7; }
+    100% { top: calc(100% - 14px); opacity: 0; }
+  }
+
+  /* ============================================================
+     LUX READOUT
+  ============================================================ */
+  .readout-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    transition: border-color 0.5s;
+  }
+
+  .readout-card.state-red    { border-color: var(--red);    }
+  .readout-card.state-yellow { border-color: var(--yellow); }
+  .readout-card.state-green  { border-color: var(--green);  }
+
+  .lux-value {
+    font-family: var(--font-mono);
+    font-size: 2.4rem;
+    font-weight: 500;
+    line-height: 1;
+    transition: color 0.5s;
+    min-width: 130px;
+  }
+
+  .lux-label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  /* Traffic light */
+  .traffic-light {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .bulb {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    transition: background 0.4s, box-shadow 0.4s, border-color 0.4s;
+    background: rgba(255,255,255,0.06);
+  }
+
+  .bulb.red    { --c: var(--red);    }
+  .bulb.yellow { --c: var(--yellow); }
+  .bulb.green  { --c: var(--green);  }
+
+  .bulb.active {
+    background: var(--c);
+    border-color: var(--c);
+    box-shadow: 0 0 14px 4px color-mix(in srgb, var(--c) 50%, transparent);
+  }
+
+  /* ============================================================
+     LIGHT BAR
+  ============================================================ */
+  .bar-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .bar-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .light-bar {
+    width: 100%;
+    height: 8px;
+    border-radius: 99px;
+    background: linear-gradient(90deg,
+      #2a4a30 0%,
+      #4caf6e 20%,
+      #a0c840 38%,
+      #e0b852 55%,
+      #e07a52 75%,
+      #e05252 100%
+    );
+    position: relative;
+    overflow: visible;
+  }
+
+  .bar-needle {
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 8px rgba(255,255,255,0.5);
+    transition: left 0.4s cubic-bezier(0.34,1.56,0.64,1);
+    pointer-events: none;
+  }
+
+  /* Range indicator under bar */
+  .range-indicator {
+    width: 100%;
+    height: 3px;
+    border-radius: 99px;
+    position: relative;
+    background: var(--border);
+    margin-top: 4px;
+  }
+
+  .range-fill {
+    position: absolute;
+    height: 100%;
+    border-radius: 99px;
+    background: var(--accent);
+    opacity: 0.5;
+    transition: left 0.3s, width 0.3s;
+  }
+
+  .range-label {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--accent);
+    text-align: center;
+    letter-spacing: 0.05em;
+    margin-top: 5px;
+    min-height: 14px;
+    opacity: 0.8;
+  }
+
+  /* ============================================================
+     PLANT SELECTOR
+  ============================================================ */
+  .selector-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-left: 4px;
+  }
+
+  .plant-search-wrap {
+    position: relative;
+  }
+
+  .plant-search-wrap input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 13px 16px 13px 44px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+  }
+
+  .plant-search-wrap input:focus { border-color: var(--accent); }
+  .plant-search-wrap input::placeholder { color: var(--muted); }
+
+  .search-icon {
+    position: absolute;
+    left: 14px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    pointer-events: none;
+    font-size: 1rem;
+  }
+
+  .dropdown {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.2s;
+    overflow-y: auto;
+  }
+
+  .dropdown.open {
+    max-height: 240px;
+    opacity: 1;
+  }
+
+  .dropdown-item {
+    padding: 11px 16px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+
+  .dropdown-item:last-child { border-bottom: none; }
+  .dropdown-item:hover, .dropdown-item.selected { background: rgba(76,175,110,0.12); }
+
+  .dropdown-item .plant-name { font-weight: 500; }
+  .dropdown-item .plant-light {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    text-align: right;
+    max-width: 130px;
+  }
+
+  /* Selected plant card */
+  .plant-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    display: none;
+  }
+
+  .plant-card.visible { display: flex; }
+
+  .plant-emoji { font-size: 2rem; line-height: 1; padding-top: 2px; }
+
+  .plant-info { flex: 1; }
+  .plant-info h3 {
+    font-family: var(--font-head);
+    font-size: 1.1rem;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  .plant-info .plant-sci {
+    font-style: italic;
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-family: var(--font-head);
+  }
+  .plant-info .plant-range {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--accent);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .range-tag {
+    background: rgba(76,175,110,0.12);
+    border: 1px solid rgba(76,175,110,0.2);
+    padding: 3px 8px;
+    border-radius: 20px;
+  }
+
+  /* ============================================================
+     STATUS MESSAGE
+  ============================================================ */
+  .status-message {
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    display: none;
+    animation: fadeIn 0.3s ease;
+    border: 1px solid transparent;
+  }
+
+  .status-message.visible { display: block; }
+
+  .status-message.red    { background: rgba(224,82,82,0.12);  border-color: rgba(224,82,82,0.25);  color: #f0a0a0; }
+  .status-message.yellow { background: rgba(224,184,82,0.12); border-color: rgba(224,184,82,0.25); color: #f0d080; }
+  .status-message.green  { background: rgba(82,201,122,0.12); border-color: rgba(82,201,122,0.25); color: #90e8b0; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* ============================================================
+     START BUTTON
+  ============================================================ */
+  .btn-start {
+    width: 100%;
+    padding: 16px;
+    background: var(--accent);
+    color: #0d1a0f;
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 14px;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+    transition: transform 0.15s, background 0.2s, opacity 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn-start:active { transform: scale(0.98); }
+  .btn-start:disabled { opacity: 0.4; cursor: default; }
+  .btn-start.stop { background: rgba(224,82,82,0.2); color: var(--red); }
+
+  /* ============================================================
+     CALIBRATION PANEL (hidden by default)
+  ============================================================ */
+  .calibration-wrap {
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    margin-top: 4px;
+  }
+
+  .calibration-toggle {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    transition: color 0.2s;
+  }
+  .calibration-toggle:hover { color: var(--accent); }
+
+  .calibration-panel {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+  }
+
+  .calibration-panel.open { display: flex; }
+
+  .cal-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .cal-row label {
+    font-size: 0.82rem;
+    color: var(--muted);
+    flex: 1;
+  }
+
+  .cal-row .cal-value {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--accent);
+    min-width: 44px;
+    text-align: right;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 120px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 99px;
+    outline: none;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid var(--bg);
+  }
+
+  .cal-note {
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.5;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+
+  /* ============================================================
+     PRIVACY NOTICE
+  ============================================================ */
+  .privacy-notice {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 12px 16px;
+    background: rgba(76,175,110,0.06);
+    border: 1px solid rgba(76,175,110,0.12);
+    border-radius: 12px;
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .privacy-notice .icon { font-size: 1rem; flex-shrink: 0; }
+
+  /* ============================================================
+     FOOTER
+  ============================================================ */
+  footer {
+    padding: 16px 24px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+    opacity: 0.5;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-top: 1px solid var(--border);
+    width: 100%;
+    margin-top: auto;
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════
+     HEADER
+══════════════════════════════════════════════ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🌿</div>
+    <h1>Lux<span>Plant</span></h1>
+  </div>
+  <span class="badge">v1.0</span>
+</header>
+
+<!-- ══════════════════════════════════════════════
+     MAIN
+══════════════════════════════════════════════ -->
+<main>
+
+  <!-- CAMERA -->
+  <div class="camera-section">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div class="scan-line" id="scanLine" style="display:none"></div>
+
+    <div class="camera-overlay" id="cameraOverlay">
+      <div style="font-size:2.5rem">📷</div>
+      <p>Apunta tu cámara al lugar donde pondrías la planta y toca <strong>Iniciar medición</strong></p>
+    </div>
+  </div>
+
+  <!-- LUX READOUT + TRAFFIC LIGHT -->
+  <div class="readout-card" id="readoutCard">
+    <div>
+      <div class="lux-value" id="luxValue" style="color:var(--muted)">— —</div>
+      <div class="lux-label">Lux estimados</div>
+    </div>
+    <div class="traffic-light">
+      <div class="bulb red"    id="bulbRed"></div>
+      <div class="bulb yellow" id="bulbYellow"></div>
+      <div class="bulb green"  id="bulbGreen"></div>
+    </div>
+  </div>
+
+  <!-- LIGHT BAR -->
+  <div class="bar-wrap">
+    <div class="bar-labels">
+      <span>Sombra</span>
+      <span>Indirecta</span>
+      <span>Directo</span>
+    </div>
+    <div class="light-bar">
+      <div class="bar-needle" id="barNeedle" style="left:0%"></div>
+    </div>
+    <div class="range-indicator">
+      <div class="range-fill" id="rangeFill" style="left:0%;width:0%"></div>
+    </div>
+    <div class="range-label" id="rangeLabel"></div>
+  </div>
+
+  <!-- PLANT SELECTOR -->
+  <div class="selector-section">
+    <div class="section-label">🌱 Selecciona tu planta</div>
+    <div class="plant-search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="plantSearch" placeholder="Buscar planta..." autocomplete="off" autocorrect="off">
+    </div>
+    <div class="dropdown" id="plantDropdown"></div>
+    <div class="plant-card" id="plantCard">
+      <div class="plant-emoji" id="plantEmoji">🌿</div>
+      <div class="plant-info">
+        <h3 id="plantCommonName"></h3>
+        <div class="plant-sci" id="plantSciName"></div>
+        <div class="plant-range" id="plantRange"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-message" id="statusMessage"></div>
+
+  <!-- BUTTON -->
+  <button class="btn-start" id="btnStart">📷 Iniciar medición</button>
+
+  <!-- CALIBRATION -->
+  <div class="calibration-wrap">
+    <button class="calibration-toggle" id="calToggle">
+      ⚙ Ajuste de sensibilidad (calibración)
+    </button>
+    <div class="calibration-panel" id="calPanel">
+      <div class="cal-row">
+        <label>Factor de corrección global</label>
+        <input type="range" id="calFactor" min="0.3" max="3.0" step="0.05" value="1.0">
+        <span class="cal-value" id="calFactorVal">×1.00</span>
+      </div>
+      <div class="cal-row">
+        <label>Compensación de mínimo (base)</label>
+        <input type="range" id="calOffset" min="0" max="2000" step="50" value="0">
+        <span class="cal-value" id="calOffsetVal">+0 lux</span>
+      </div>
+      <div class="cal-note">
+        💡 <strong>Guía rápida:</strong> Si la lectura parece muy baja en iPhone, sube el factor a ×1.5–2.0. Si es muy alta en Android, bájalo a ×0.7–0.8. Usa una app de luxómetro profesional como referencia para afinar.
+      </div>
+    </div>
+  </div>
+
+  <!-- PRIVACY -->
+  <div class="privacy-notice">
+    <span class="icon">🔒</span>
+    <span>Toda la medición ocurre <strong>100% en tu dispositivo</strong>. Ninguna imagen ni dato se envía a servidores. Tu privacidad está protegida.</span>
+  </div>
+
+</main>
+
+<footer>LuxPlant · Análisis local · Sin datos enviados</footer>
+
+<!-- ══════════════════════════════════════════════
+     SCRIPT
+══════════════════════════════════════════════ -->
+<script>
+/* ================================================================
+   PLANT DATABASE (150+ species)
+   Format: { name, sci, emoji, minLux, maxLux, ideal, category }
+================================================================ */
+const PLANTS = [
+  // Low light
+  { name:"Pothos / Epipremnum",    sci:"Epipremnum aureum",       emoji:"🌿", minLux:200,   maxLux:2500,  ideal:"Luz indirecta baja–media",    cat:"interior" },
+  { name:"Lengua de suegra",       sci:"Sansevieria trifasciata",  emoji:"🌵", minLux:100,   maxLux:3000,  ideal:"Muy adaptable, sombra OK",     cat:"interior" },
+  { name:"Pothos plateado",        sci:"Scindapsus pictus",        emoji:"🌿", minLux:200,   maxLux:2000,  ideal:"Luz indirecta baja",           cat:"interior" },
+  { name:"ZZ Plant",               sci:"Zamioculcas zamiifolia",   emoji:"🌱", minLux:100,   maxLux:2500,  ideal:"Sombra / indirecta baja",      cat:"interior" },
+  { name:"Helecho de Boston",      sci:"Nephrolepis exaltata",     emoji:"🌿", minLux:500,   maxLux:3000,  ideal:"Indirecta media, humedad",     cat:"interior" },
+  { name:"Drácena marginata",      sci:"Dracaena marginata",       emoji:"🌴", minLux:300,   maxLux:4000,  ideal:"Indirecta baja–media",         cat:"interior" },
+  { name:"Palmera bambú",          sci:"Chamaedorea seifrizii",    emoji:"🌴", minLux:500,   maxLux:3500,  ideal:"Sombra filtrada",              cat:"interior" },
+  { name:"Aglaonema",              sci:"Aglaonema commutatum",     emoji:"🌿", minLux:200,   maxLux:3000,  ideal:"Sombra / indirecta",           cat:"interior" },
+  { name:"Calathea orbifolia",     sci:"Calathea orbifolia",       emoji:"🌿", minLux:500,   maxLux:3000,  ideal:"Indirecta media, sin sol",     cat:"interior" },
+  { name:"Calathea medallón",      sci:"Calathea roseopicta",      emoji:"🌿", minLux:400,   maxLux:2500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Maranta",                sci:"Maranta leuconeura",       emoji:"🌿", minLux:400,   maxLux:2500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Aspidistra",             sci:"Aspidistra elatior",       emoji:"🌿", minLux:100,   maxLux:2000,  ideal:"Sombra profunda OK",           cat:"interior" },
+  { name:"Cinta / Malamadre",      sci:"Chlorophytum comosum",     emoji:"🌿", minLux:300,   maxLux:5000,  ideal:"Indirecta baja–alta",          cat:"interior" },
+  { name:"Hiedra inglesa",         sci:"Hedera helix",             emoji:"🌿", minLux:500,   maxLux:5000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Filodendro hoja corazón",sci:"Philodendron hederaceum",  emoji:"🌱", minLux:300,   maxLux:3500,  ideal:"Indirecta baja–media",         cat:"interior" },
+  { name:"Filodendro gloriosum",   sci:"Philodendron gloriosum",   emoji:"🌱", minLux:500,   maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Monstera deliciosa",     sci:"Monstera deliciosa",       emoji:"🍃", minLux:1000,  maxLux:5000,  ideal:"Indirecta media–alta",         cat:"interior" },
+  { name:"Monstera adansonii",     sci:"Monstera adansonii",       emoji:"🍃", minLux:800,   maxLux:4500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Monstera thai constellation", sci:"Monstera deliciosa 'Thai'", emoji:"🍃", minLux:1500, maxLux:6000, ideal:"Indirecta alta",          cat:"interior" },
+  { name:"Monstera albo variegata",sci:"Monstera deliciosa 'Albo'",emoji:"🍃", minLux:2000,  maxLux:7000,  ideal:"Indirecta alta–directa suave", cat:"interior" },
+  { name:"Anthurium clarinervium",sci:"Anthurium clarinervium",    emoji:"🌺", minLux:500,   maxLux:3500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Anthurium andraeanum",  sci:"Anthurium andraeanum",      emoji:"🌺", minLux:1000,  maxLux:4000,  ideal:"Indirecta media–alta",         cat:"interior" },
+  { name:"Alocasia amazónica",    sci:"Alocasia × amazonica",      emoji:"🌿", minLux:1500,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Alocasia zebrina",      sci:"Alocasia zebrina",          emoji:"🌿", minLux:1500,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Colocasia / Taro",      sci:"Colocasia esculenta",       emoji:"🌿", minLux:2000,  maxLux:8000,  ideal:"Semi-directa",                 cat:"exterior" },
+  { name:"Begonia rex",           sci:"Begonia rex",                emoji:"🌸", minLux:500,   maxLux:3000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Begonia maculata",      sci:"Begonia maculata",          emoji:"🌸", minLux:800,   maxLux:4000,  ideal:"Indirecta media–alta",         cat:"interior" },
+  // Medium light
+  { name:"Ficus lyrata (lira)",   sci:"Ficus lyrata",              emoji:"🌳", minLux:1500,  maxLux:8000,  ideal:"Indirecta alta, sin corrientes",cat:"interior" },
+  { name:"Ficus benjamina",       sci:"Ficus benjamina",           emoji:"🌳", minLux:1500,  maxLux:7000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Ficus elástico",        sci:"Ficus elastica",            emoji:"🌳", minLux:1000,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Ficus umbellata",       sci:"Ficus umbellata",           emoji:"🌳", minLux:1500,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Poto neon",             sci:"Epipremnum aureum 'Neon'",  emoji:"💚", minLux:500,   maxLux:4000,  ideal:"Indirecta media–alta (colores)",cat:"interior" },
+  { name:"Tradescantia zebrina",  sci:"Tradescantia zebrina",      emoji:"🌿", minLux:800,   maxLux:5000,  ideal:"Indirecta alta, mejor con sol suave",cat:"interior" },
+  { name:"Hoya carnosa",          sci:"Hoya carnosa",              emoji:"🌺", minLux:1500,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Hoya kerrii",           sci:"Hoya kerrii",               emoji:"💚", minLux:1500,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Hoya pubicalyx",        sci:"Hoya pubicalyx",            emoji:"🌺", minLux:2000,  maxLux:7000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Pilea peperomioides",   sci:"Pilea peperomioides",       emoji:"🪴", minLux:1000,  maxLux:5000,  ideal:"Indirecta alta, gira la maceta",cat:"interior" },
+  { name:"Oxalis triangularis",   sci:"Oxalis triangularis",       emoji:"🌸", minLux:1000,  maxLux:5000,  ideal:"Indirecta alta–directa suave", cat:"interior" },
+  { name:"Peperomia obtusifolia", sci:"Peperomia obtusifolia",     emoji:"🌿", minLux:400,   maxLux:3500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Peperomia caperata",    sci:"Peperomia caperata",        emoji:"🌿", minLux:500,   maxLux:3500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Peperomia watermelon",  sci:"Peperomia argyreia",        emoji:"🍉", minLux:800,   maxLux:4000,  ideal:"Indirecta media–alta",         cat:"interior" },
+  { name:"Syngonium podophyllum", sci:"Syngonium podophyllum",     emoji:"🌿", minLux:500,   maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Spathiphyllum / Cuna de Moisés", sci:"Spathiphyllum wallisii", emoji:"🤍", minLux:200, maxLux:3500, ideal:"Sombra / indirecta media",  cat:"interior" },
+  { name:"Clivia",                sci:"Clivia miniata",            emoji:"🌸", minLux:500,   maxLux:3500,  ideal:"Indirecta media",              cat:"interior" },
+  // High light / direct
+  { name:"Cactus Saguaro",        sci:"Carnegiea gigantea",        emoji:"🌵", minLux:15000, maxLux:60000, ideal:"Sol directo pleno",            cat:"exterior" },
+  { name:"Cactus barril",         sci:"Ferocactus wislizeni",      emoji:"🌵", minLux:10000, maxLux:50000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Cactus de navidad",     sci:"Schlumbergera bridgesii",   emoji:"🌺", minLux:2000,  maxLux:8000,  ideal:"Indirecta alta / sol mañana",  cat:"interior" },
+  { name:"Echeveria",             sci:"Echeveria spp.",            emoji:"🌵", minLux:5000,  maxLux:25000, ideal:"Sol directo / semidirecto",    cat:"exterior" },
+  { name:"Aloe vera",             sci:"Aloe barbadensis",          emoji:"🌿", minLux:3000,  maxLux:15000, ideal:"Indirecta alta o sol suave",   cat:"interior" },
+  { name:"Haworthia fasciata",    sci:"Haworthia fasciata",        emoji:"🌵", minLux:1000,  maxLux:6000,  ideal:"Indirecta alta (suculenta suave)",cat:"interior" },
+  { name:"Gasteria",              sci:"Gasteria spp.",             emoji:"🌵", minLux:800,   maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Agave",                 sci:"Agave americana",           emoji:"🌵", minLux:8000,  maxLux:40000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Lavanda",               sci:"Lavandula angustifolia",    emoji:"💜", minLux:6000,  maxLux:25000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Rosal",                 sci:"Rosa × hybrida",            emoji:"🌹", minLux:6000,  maxLux:30000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Geranio",               sci:"Pelargonium × hortorum",    emoji:"🌸", minLux:5000,  maxLux:20000, ideal:"Sol directo / semidirecto",    cat:"exterior" },
+  { name:"Petunia",               sci:"Petunia × hybrida",        emoji:"🌸", minLux:6000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Impatiens",             sci:"Impatiens walleriana",      emoji:"🌸", minLux:2000,  maxLux:8000,  ideal:"Sombra / indirecta alta",      cat:"exterior" },
+  { name:"Tomillo",               sci:"Thymus vulgaris",           emoji:"🌿", minLux:6000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Albahaca",              sci:"Ocimum basilicum",          emoji:"🌿", minLux:6000,  maxLux:20000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Cilantro",              sci:"Coriandrum sativum",        emoji:"🌿", minLux:4000,  maxLux:15000, ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Menta",                 sci:"Mentha spicata",            emoji:"🌿", minLux:3000,  maxLux:12000, ideal:"Semisombra / sol parcial",     cat:"exterior" },
+  { name:"Orquídea Phalaenopsis", sci:"Phalaenopsis spp.",         emoji:"🌸", minLux:1000,  maxLux:5000,  ideal:"Indirecta alta, sin sol directo",cat:"interior" },
+  { name:"Orquídea Cattleya",     sci:"Cattleya spp.",             emoji:"🌸", minLux:2000,  maxLux:8000,  ideal:"Semidirecta / indirecta alta", cat:"interior" },
+  { name:"Orquídea Dendrobium",   sci:"Dendrobium spp.",           emoji:"🌸", minLux:2500,  maxLux:8000,  ideal:"Semidirecta",                  cat:"interior" },
+  { name:"Orquídea Oncidium",     sci:"Oncidium spp.",             emoji:"🌸", minLux:3000,  maxLux:10000, ideal:"Semidirecta / sol suave",      cat:"interior" },
+  { name:"Bromeliace / Guzmania", sci:"Guzmania lingulata",        emoji:"🌺", minLux:1000,  maxLux:5000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Tillandsia / Aérea",    sci:"Tillandsia ionantha",       emoji:"🌱", minLux:2000,  maxLux:8000,  ideal:"Indirecta alta–semidirecta",   cat:"interior" },
+  { name:"Strelitzia / Ave del paraíso", sci:"Strelitzia reginae", emoji:"🌺", minLux:3000, maxLux:15000, ideal:"Indirecta alta o sol suave",   cat:"interior" },
+  { name:"Planta del dinero",     sci:"Pachira aquatica",          emoji:"🍀", minLux:1000,  maxLux:5000,  ideal:"Indirecta media–alta",         cat:"interior" },
+  { name:"Bonsái Ficus",          sci:"Ficus microcarpa",          emoji:"🌳", minLux:2000,  maxLux:10000, ideal:"Indirecta alta / sol suave",   cat:"interior" },
+  { name:"Bonsái Junípero",       sci:"Juniperus chinensis",       emoji:"🌲", minLux:8000,  maxLux:30000, ideal:"Sol directo, exterior",        cat:"exterior" },
+  { name:"Jazmín",                sci:"Jasminum sambac",           emoji:"🌸", minLux:4000,  maxLux:15000, ideal:"Sol parcial–directo",          cat:"exterior" },
+  { name:"Gardenia",              sci:"Gardenia jasminoides",      emoji:"🌸", minLux:3000,  maxLux:10000, ideal:"Indirecta alta / sol mañana",  cat:"exterior" },
+  { name:"Hibisco",               sci:"Hibiscus rosa-sinensis",    emoji:"🌺", minLux:4000,  maxLux:20000, ideal:"Sol parcial–directo",          cat:"exterior" },
+  { name:"Adelfa / Oleander",     sci:"Nerium oleander",           emoji:"🌸", minLux:5000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Palmera areca",         sci:"Dypsis lutescens",          emoji:"🌴", minLux:1500,  maxLux:6000,  ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Palmera canarias",      sci:"Phoenix canariensis",       emoji:"🌴", minLux:5000,  maxLux:30000, ideal:"Sol directo, exterior",        cat:"exterior" },
+  { name:"Palmera kentia",        sci:"Howea forsteriana",         emoji:"🌴", minLux:500,   maxLux:4000,  ideal:"Indirecta baja–media",         cat:"interior" },
+  { name:"Raphis / Palmera abanico", sci:"Rhapis excelsa",         emoji:"🌴", minLux:800,   maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Yuca interior",         sci:"Yucca elephantipes",        emoji:"🌵", minLux:2000,  maxLux:8000,  ideal:"Indirecta alta / sol suave",   cat:"interior" },
+  { name:"Yuca exterior",         sci:"Yucca aloifolia",           emoji:"🌵", minLux:8000,  maxLux:40000, ideal:"Sol directo pleno",            cat:"exterior" },
+  { name:"Schefflera / Paragüero",sci:"Schefflera actinophylla",   emoji:"🌿", minLux:1000,  maxLux:5000,  ideal:"Indirecta media–alta",         cat:"interior" },
+  { name:"Planta serpiente verde",sci:"Sansevieria trifasciata 'Laurentii'", emoji:"🌵", minLux:150, maxLux:3000, ideal:"Muy tolerante a sombra", cat:"interior" },
+  { name:"Croton",                sci:"Codiaeum variegatum",       emoji:"🍂", minLux:3000,  maxLux:10000, ideal:"Sol suave–semidirecto (colores)",cat:"interior" },
+  { name:"Cóleo / Coleus",        sci:"Plectranthus scutellarioides",emoji:"🍂",minLux:2000, maxLux:8000,  ideal:"Indirecta alta / sol mañana",  cat:"interior" },
+  { name:"Aster",                 sci:"Aster spp.",                emoji:"🌸", minLux:6000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Girasol",               sci:"Helianthus annuus",         emoji:"🌻", minLux:10000, maxLux:50000, ideal:"Sol directo pleno ≥8h",        cat:"exterior" },
+  { name:"Crisantemo",            sci:"Chrysanthemum × morifolium",emoji:"🌸", minLux:3000,  maxLux:12000, ideal:"Sol parcial–directo",          cat:"exterior" },
+  { name:"Cebollín / Ciboulette", sci:"Allium schoenoprasum",      emoji:"🌿", minLux:4000,  maxLux:15000, ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Perejil",               sci:"Petroselinum crispum",      emoji:"🌿", minLux:3000,  maxLux:10000, ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Orégano",               sci:"Origanum vulgare",          emoji:"🌿", minLux:5000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Romero",                sci:"Salvia rosmarinus",         emoji:"🌿", minLux:6000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Eneldo",                sci:"Anethum graveolens",        emoji:"🌿", minLux:5000,  maxLux:18000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Tomate cherry",         sci:"Solanum lycopersicum var.", emoji:"🍅", minLux:8000,  maxLux:40000, ideal:"Sol directo ≥8h",              cat:"exterior" },
+  { name:"Pimiento / Ají",        sci:"Capsicum annuum",           emoji:"🌶️", minLux:6000, maxLux:30000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Lechuga",               sci:"Lactuca sativa",            emoji:"🥬", minLux:2000,  maxLux:8000,  ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Espinaca",              sci:"Spinacia oleracea",         emoji:"🌿", minLux:1500,  maxLux:7000,  ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Zanahoria",             sci:"Daucus carota subsp.",      emoji:"🥕", minLux:5000,  maxLux:20000, ideal:"Sol parcial–directo",          cat:"exterior" },
+  { name:"Maíz",                  sci:"Zea mays",                  emoji:"🌽", minLux:10000, maxLux:50000, ideal:"Sol directo pleno",            cat:"exterior" },
+  { name:"Fresa",                 sci:"Fragaria × ananassa",       emoji:"🍓", minLux:5000,  maxLux:20000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Arándano",              sci:"Vaccinium corymbosum",      emoji:"🫐", minLux:5000,  maxLux:20000, ideal:"Sol parcial–directo",          cat:"exterior" },
+  { name:"Cactus opuntia (nopal)",sci:"Opuntia ficus-indica",      emoji:"🌵", minLux:8000,  maxLux:40000, ideal:"Sol directo pleno",            cat:"exterior" },
+  { name:"Cereus peruvianus",     sci:"Cereus hildmannianus",      emoji:"🌵", minLux:6000,  maxLux:30000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Mamillaria",            sci:"Mammillaria spp.",          emoji:"🌵", minLux:5000,  maxLux:25000, ideal:"Sol directo / semidirecto",    cat:"exterior" },
+  { name:"Gymnocalycium",         sci:"Gymnocalycium mihanovichii", emoji:"🌵", minLux:1500, maxLux:5000,  ideal:"Semisombra (cactus tolerante)",cat:"interior" },
+  { name:"Euphorbia tirucalli",   sci:"Euphorbia tirucalli",       emoji:"🌿", minLux:4000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Euphorbia milii",       sci:"Euphorbia milii",           emoji:"🌺", minLux:3000,  maxLux:12000, ideal:"Sol suave–semidirecto",        cat:"interior" },
+  { name:"Adenium / Rosa del desierto", sci:"Adenium obesum",      emoji:"🌺", minLux:5000,  maxLux:25000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Portulaca / Verdolaga", sci:"Portulaca grandiflora",     emoji:"🌸", minLux:6000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Sedum",                 sci:"Sedum spp.",                emoji:"🌵", minLux:3000,  maxLux:15000, ideal:"Sol directo / semidirecto",    cat:"exterior" },
+  { name:"Aeonium",               sci:"Aeonium arboreum",          emoji:"🌵", minLux:2000,  maxLux:10000, ideal:"Sol suave–semidirecto",        cat:"exterior" },
+  { name:"Sempervivum",           sci:"Sempervivum tectorum",      emoji:"🌵", minLux:4000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Plectranthus / Espadilla", sci:"Plectranthus verticillatus",emoji:"🌿",minLux:800,  maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Adiantum / Helecho culantrillo", sci:"Adiantum capillus-veneris",emoji:"🌿",minLux:500,maxLux:2500,ideal:"Sombra / indirecta baja",   cat:"interior" },
+  { name:"Asplenium nido de pájaro", sci:"Asplenium nidus",        emoji:"🌿", minLux:400,   maxLux:3000,  ideal:"Indirecta baja–media",         cat:"interior" },
+  { name:"Selaginella",           sci:"Selaginella uncinata",      emoji:"🌿", minLux:300,   maxLux:2000,  ideal:"Sombra alta humedad",          cat:"interior" },
+  { name:"Fittonia / Red de nervios", sci:"Fittonia albivenis",    emoji:"🌿", minLux:500,   maxLux:2500,  ideal:"Sombra / indirecta baja",      cat:"interior" },
+  { name:"Caladium",              sci:"Caladium bicolor",          emoji:"🍂", minLux:1000,  maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Dieffenbachia",         sci:"Dieffenbachia seguine",     emoji:"🌿", minLux:500,   maxLux:4000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Anturio negro",         sci:"Anthurium warocqueanum",    emoji:"🌿", minLux:500,   maxLux:3500,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Scindapsus treubii",    sci:"Scindapsus treubii",        emoji:"🌿", minLux:500,   maxLux:3000,  ideal:"Indirecta media",              cat:"interior" },
+  { name:"Rhaphidophora tetrasperma", sci:"Rhaphidophora tetrasperma",emoji:"🌿",minLux:1000,maxLux:5000,ideal:"Indirecta alta",               cat:"interior" },
+  { name:"Cereza de invierno",    sci:"Solanum pseudocapsicum",    emoji:"🍊", minLux:2000,  maxLux:8000,  ideal:"Indirecta alta / sol suave",   cat:"interior" },
+  { name:"Cyclamen",              sci:"Cyclamen persicum",         emoji:"🌸", minLux:1500,  maxLux:5000,  ideal:"Indirecta alta / frescos",     cat:"interior" },
+  { name:"Primula",               sci:"Primula vulgaris",          emoji:"🌸", minLux:2000,  maxLux:7000,  ideal:"Sol suave / semisombra",       cat:"exterior" },
+  { name:"Viola / Pensamiento",   sci:"Viola × wittrockiana",      emoji:"🌸", minLux:3000,  maxLux:12000, ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Vinca / Catharanthus",  sci:"Catharanthus roseus",       emoji:"🌸", minLux:4000,  maxLux:15000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Coleús exterior",       sci:"Solenostemon scutellarioides",emoji:"🍂",minLux:3000, maxLux:10000, ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Datura / Trompeta ángel", sci:"Brugmansia spp.",         emoji:"🌸", minLux:5000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Plumbago",              sci:"Plumbago auriculata",       emoji:"🌸", minLux:5000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Bougainvillea",         sci:"Bougainvillea glabra",      emoji:"🌺", minLux:8000,  maxLux:40000, ideal:"Sol directo pleno",            cat:"exterior" },
+  { name:"Pasionaria",            sci:"Passiflora caerulea",       emoji:"🌺", minLux:5000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Wisteria / Glicinia",   sci:"Wisteria sinensis",         emoji:"🌸", minLux:6000,  maxLux:25000, ideal:"Sol directo",                  cat:"exterior" },
+  { name:"Clematide",             sci:"Clematis spp.",             emoji:"🌸", minLux:4000,  maxLux:15000, ideal:"Sol parcial–directo",          cat:"exterior" },
+  { name:"Hortensia",             sci:"Hydrangea macrophylla",     emoji:"🌸", minLux:2000,  maxLux:8000,  ideal:"Semisombra / sol mañana",      cat:"exterior" },
+  { name:"Camelia",               sci:"Camellia japonica",         emoji:"🌸", minLux:2000,  maxLux:7000,  ideal:"Semisombra / indirecta alta",  cat:"exterior" },
+  { name:"Azalea",                sci:"Rhododendron spp.",         emoji:"🌸", minLux:2000,  maxLux:8000,  ideal:"Sol parcial",                  cat:"exterior" },
+  { name:"Limonero",              sci:"Citrus limon",              emoji:"🍋", minLux:6000,  maxLux:30000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Naranjo enano",         sci:"Citrus sinensis",           emoji:"🍊", minLux:6000,  maxLux:30000, ideal:"Sol directo ≥6h",              cat:"exterior" },
+  { name:"Olivar / Olivo",        sci:"Olea europaea",             emoji:"🫒", minLux:6000, maxLux:30000,  ideal:"Sol directo pleno",            cat:"exterior" },
+  { name:"Cerezo ornamental",     sci:"Prunus serrulata",          emoji:"🌸", minLux:5000,  maxLux:20000, ideal:"Sol directo",                  cat:"exterior" },
+].sort((a,b) => a.name.localeCompare(b.name, 'es'));
+
+/* ================================================================
+   CONSTANTS
+================================================================ */
+// LUX estimation: luminance Y (0–1) → approximate lux
+// Y = luminance calculated from RGB
+// Approximation: lux ≈ Y^1.8 * 25000 (tuneable)
+// Max lux of a scene captured by phone ≈ 20,000–30,000 lux
+const LUX_SCALE = 25000; // base scale (overridden by calibration)
+const LUX_GAMMA = 1.8;
+const SAMPLE_INTERVAL_MS = 200;  // update every 200ms
+const SAMPLE_SIZE = 64; // pixels to sample from centre region
+
+/* ================================================================
+   STATE
+================================================================ */
+let stream = null;
+let animFrame = null;
+let intervalId = null;
+let isRunning = false;
+let selectedPlant = null;
+let calFactor = 1.0;
+let calOffset = 0;
+let currentLux = 0;
+
+const video    = document.getElementById('video');
+const canvas   = document.getElementById('canvas');
+const ctx      = canvas.getContext('2d', { willReadFrequently: true });
+const overlay  = document.getElementById('cameraOverlay');
+const luxEl    = document.getElementById('luxValue');
+const needle   = document.getElementById('barNeedle');
+const scanLine = document.getElementById('scanLine');
+const card     = document.getElementById('readoutCard');
+const bulbR    = document.getElementById('bulbRed');
+const bulbY    = document.getElementById('bulbYellow');
+const bulbG    = document.getElementById('bulbGreen');
+const statusEl = document.getElementById('statusMessage');
+const plantCard = document.getElementById('plantCard');
+const rangeFill = document.getElementById('rangeFill');
+const rangeLabel = document.getElementById('rangeLabel');
+const btnStart  = document.getElementById('btnStart');
+const searchInput = document.getElementById('plantSearch');
+const dropdown  = document.getElementById('plantDropdown');
+
+/* ================================================================
+   PLANT SEARCH + DROPDOWN
+================================================================ */
+function renderDropdown(query) {
+  const q = query.toLowerCase().trim();
+  const results = q.length < 1
+    ? PLANTS.slice(0, 40)
+    : PLANTS.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.sci.toLowerCase().includes(q)
+      ).slice(0, 30);
+
+  dropdown.innerHTML = '';
+  if (results.length === 0) {
+    dropdown.innerHTML = '<div class="dropdown-item"><span style="color:var(--muted)">Sin resultados…</span></div>';
+  } else {
+    results.forEach(p => {
+      const div = document.createElement('div');
+      div.className = 'dropdown-item' + (selectedPlant === p ? ' selected' : '');
+      div.innerHTML = `
+        <span class="plant-name">${p.emoji} ${p.name}</span>
+        <span class="plant-light">${p.minLux.toLocaleString()}–${p.maxLux.toLocaleString()} lux</span>
+      `;
+      div.addEventListener('mousedown', e => {
+        e.preventDefault();
+        selectPlant(p);
+      });
+      dropdown.appendChild(div);
+    });
+  }
+  dropdown.classList.add('open');
+}
+
+searchInput.addEventListener('focus', () => renderDropdown(searchInput.value));
+searchInput.addEventListener('input', () => renderDropdown(searchInput.value));
+searchInput.addEventListener('blur', () => {
+  setTimeout(() => dropdown.classList.remove('open'), 150);
+});
+
+function selectPlant(p) {
+  selectedPlant = p;
+  searchInput.value = p.name;
+  dropdown.classList.remove('open');
+  showPlantCard(p);
+  updateStatus();
+}
+
+function showPlantCard(p) {
+  plantCard.classList.add('visible');
+  document.getElementById('plantEmoji').textContent = p.emoji;
+  document.getElementById('plantCommonName').textContent = p.name;
+  document.getElementById('plantSciName').textContent = p.sci;
+  const rangeDiv = document.getElementById('plantRange');
+  rangeDiv.innerHTML = `
+    <span class="range-tag">Min: ${p.minLux.toLocaleString()} lux</span>
+    <span class="range-tag">Max: ${p.maxLux.toLocaleString()} lux</span>
+    <span class="range-tag" style="color:var(--text)">${p.ideal}</span>
+  `;
+  // Update range indicator on bar
+  updateRangeBar(p);
+}
+
+/* ================================================================
+   RANGE BAR
+================================================================ */
+const LUX_BAR_MAX = 30000;
+
+function luxToBarPct(lux) {
+  // Log scale for better distribution
+  const logMin = Math.log(100);
+  const logMax = Math.log(LUX_BAR_MAX);
+  const logLux = Math.log(Math.max(100, Math.min(lux, LUX_BAR_MAX)));
+  return ((logLux - logMin) / (logMax - logMin)) * 100;
+}
+
+function updateRangeBar(p) {
+  if (!p) { rangeFill.style.width = '0%'; return; }
+  const left  = luxToBarPct(p.minLux);
+  const right = luxToBarPct(p.maxLux);
+  rangeFill.style.left  = `${left}%`;
+  rangeFill.style.width = `${right - left}%`;
+  rangeLabel.textContent = `Rango ${p.name}: ${p.minLux.toLocaleString()} – ${p.maxLux.toLocaleString()} lux`;
+}
+
+/* ================================================================
+   CAMERA
+================================================================ */
+async function startCamera() {
+  try {
+    // Prefer front camera (selfie) so user sees screen; fall back to any camera
+    const constraints = {
+      video: {
+        facingMode: { ideal: 'environment' }, // rear = more accurate light reading
+        width:  { ideal: 640 },
+        height: { ideal: 480 }
+      }
+    };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    await video.play();
+    overlay.classList.add('hidden');
+    scanLine.style.display = 'block';
+    isRunning = true;
+    btnStart.textContent = '⏹ Detener medición';
+    btnStart.classList.add('stop');
+    intervalId = setInterval(takeSample, SAMPLE_INTERVAL_MS);
+  } catch(err) {
+    alert('No se pudo acceder a la cámara. Por favor, permite el acceso en los ajustes del navegador.\n\nError: ' + err.message);
+  }
+}
+
+function stopCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  clearInterval(intervalId);
+  isRunning = false;
+  scanLine.style.display = 'none';
+  overlay.classList.remove('hidden');
+  btnStart.textContent = '📷 Iniciar medición';
+  btnStart.classList.remove('stop');
+  luxEl.textContent = '— —';
+  luxEl.style.color = 'var(--muted)';
+  needle.style.left = '0%';
+  [bulbR, bulbY, bulbG].forEach(b => b.classList.remove('active'));
+  card.className = 'readout-card';
+  statusEl.className = 'status-message';
+}
+
+btnStart.addEventListener('click', () => {
+  if (isRunning) stopCamera();
+  else startCamera();
+});
+
+/* ================================================================
+   LUMINANCE ALGORITHM
+   CIE formula: Y = 0.2126R + 0.7152G + 0.0722B  (linear RGB)
+   We sample NxN pixels from the centre region and average them.
+================================================================ */
+function takeSample() {
+  if (!video.videoWidth) return;
+
+  // Match canvas to video
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  // Draw current video frame
+  ctx.drawImage(video, 0, 0);
+
+  // Sample a grid of SAMPLE_SIZE pixels from centre 60% of frame
+  const cxStart = Math.floor(canvas.width  * 0.2);
+  const cyStart = Math.floor(canvas.height * 0.2);
+  const cxEnd   = Math.floor(canvas.width  * 0.8);
+  const cyEnd   = Math.floor(canvas.height * 0.8);
+  const cw = cxEnd - cxStart;
+  const ch = cyEnd - cyStart;
+
+  const step = Math.max(1, Math.floor(Math.sqrt((cw * ch) / SAMPLE_SIZE)));
+  let totalY = 0, count = 0;
+
+  for (let y = cyStart; y < cyEnd; y += step) {
+    for (let x = cxStart; x < cxEnd; x += step) {
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      // sRGB linearise (approximate)
+      const r = Math.pow(d[0]/255, 2.2);
+      const g = Math.pow(d[1]/255, 2.2);
+      const b = Math.pow(d[2]/255, 2.2);
+      totalY += 0.2126*r + 0.7152*g + 0.0722*b;
+      count++;
+    }
+  }
+
+  const avgY = count > 0 ? totalY / count : 0;
+  // Convert luminance to lux estimate
+  const rawLux = Math.pow(avgY, LUX_GAMMA) * LUX_SCALE;
+  currentLux = Math.round(rawLux * calFactor + calOffset);
+  currentLux = Math.max(0, currentLux);
+
+  updateDisplay();
+}
+
+/* ================================================================
+   DISPLAY UPDATE
+================================================================ */
+function updateDisplay() {
+  const lux = currentLux;
+
+  // Format number
+  luxEl.textContent = lux >= 1000
+    ? (lux/1000).toFixed(1) + 'k'
+    : lux.toString();
+
+  // Move needle (log scale)
+  const pct = Math.min(100, Math.max(0, luxToBarPct(lux)));
+  needle.style.left = pct + '%';
+
+  updateStatus();
+}
+
+function updateStatus() {
+  const lux = currentLux;
+  const p   = selectedPlant;
+
+  // Traffic light logic
+  let state = null;
+
+  if (p && isRunning) {
+    if (lux < p.minLux) state = 'red';
+    else if (lux > p.maxLux) state = 'yellow'; // too bright
+    else state = 'green';
+  } else if (isRunning) {
+    // Generic ranges when no plant selected
+    if (lux < 500)         state = 'red';
+    else if (lux < 5000)   state = 'yellow';
+    else                   state = 'green';
+  }
+
+  // Apply bulbs
+  bulbR.classList.toggle('active', state === 'red');
+  bulbY.classList.toggle('active', state === 'yellow');
+  bulbG.classList.toggle('active', state === 'green');
+
+  // Card border
+  card.className = 'readout-card' + (state ? ' state-' + state : '');
+
+  // Lux color
+  const colors = { red:'var(--red)', yellow:'var(--yellow)', green:'var(--green)' };
+  luxEl.style.color = state ? colors[state] : 'var(--muted)';
+
+  // Status message
+  if (!p || !isRunning) {
+    statusEl.className = 'status-message';
+    return;
+  }
+
+  let msg = '';
+  if (state === 'red') {
+    msg = `🔴 <strong>Luz insuficiente</strong> para <em>${p.name}</em>. Necesita al menos ${p.minLux.toLocaleString()} lux. Prueba acercarte a una ventana o usar luz artificial.`;
+  } else if (state === 'yellow') {
+    msg = `🟡 <strong>Demasiada luz</strong> para <em>${p.name}</em>. Su máximo recomendado es ${p.maxLux.toLocaleString()} lux. Protégela de la luz directa o aléjala de la ventana.`;
+  } else {
+    msg = `🟢 <strong>¡Ubicación perfecta!</strong> La luz aquí (${lux.toLocaleString()} lux) está dentro del rango ideal para <em>${p.name}</em> (${p.minLux.toLocaleString()}–${p.maxLux.toLocaleString()} lux).`;
+  }
+
+  statusEl.innerHTML = msg;
+  statusEl.className = 'status-message visible ' + state;
+}
+
+/* ================================================================
+   CALIBRATION
+================================================================ */
+document.getElementById('calToggle').addEventListener('click', () => {
+  document.getElementById('calPanel').classList.toggle('open');
+});
+
+const calFactorSlider = document.getElementById('calFactor');
+const calOffsetSlider = document.getElementById('calOffset');
+const calFactorVal    = document.getElementById('calFactorVal');
+const calOffsetVal    = document.getElementById('calOffsetVal');
+
+calFactorSlider.addEventListener('input', () => {
+  calFactor = parseFloat(calFactorSlider.value);
+  calFactorVal.textContent = '×' + calFactor.toFixed(2);
+});
+
+calOffsetSlider.addEventListener('input', () => {
+  calOffset = parseInt(calOffsetSlider.value);
+  calOffsetVal.textContent = '+' + calOffset.toLocaleString() + ' lux';
+});
+
+</script>
+</body>
+</html>
